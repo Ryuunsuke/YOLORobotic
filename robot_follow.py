@@ -7,6 +7,7 @@ from flask import Flask, Response
 class robot_follow(object):
     
     def __init__(self,ain1=12,ain2=13,ena=6,bin1=20,bin2=21,enb=26):
+        GPIO.setmode(GPIO.BCM)
         self.AIN1 = ain1
         self.AIN2 = ain2
         self.BIN1 = bin1
@@ -16,7 +17,7 @@ class robot_follow(object):
         self.PA  = 50
         self.PB  = 50
 
-        GPIO.setmode(GPIO.BCM)
+        
         GPIO.setwarnings(False)
         GPIO.setup(self.AIN1,GPIO.OUT)
         GPIO.setup(self.AIN2,GPIO.OUT)
@@ -190,12 +191,12 @@ if not ret:
     cap.release()
     cap = cv2.VideoCapture(1)
 
-cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG")) 
+cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"YUYV")) 
 # Request 30 FPS 
 cap.set(cv2.CAP_PROP_FPS, 30) 
 # Set resolution 
-cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640) 
-cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+cap.set(cv2.CAP_PROP_FRAME_WIDTH, 320) 
+cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 240)
 Ab = robot_follow()
 control_mode = "manual"
 
@@ -252,7 +253,7 @@ def index():
             <img src="/video" width="640" style="border: 2px solid #555;">
             
             <div class="status-box">
-                <h2 id="status">Mode: AUTO (Following)</h2>
+                <h2 id="status">Mode: Manual</h2>
                 <button onclick="setMode('auto')">AI Follow Mode</button>
                 <button onclick="setMode('manual')">Manual Control Mode</button>
             </div>

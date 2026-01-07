@@ -1,12 +1,16 @@
 import RPi.GPIO as GPIO
 import time
 import cv2
+import os
+import signal
 from ultralytics import YOLO
 from flask import Flask, Response
+from threading import Thread
 
+# --- ROBOT CLASS DEFINITION ---
 class self_trained_model_run(object):
-    
     def __init__(self,ain1=12,ain2=13,ena=6,bin1=20,bin2=21,enb=26):
+        GPIO.setmode(GPIO.BCM)
         self.AIN1 = ain1
         self.AIN2 = ain2
         self.BIN1 = bin1
@@ -16,7 +20,6 @@ class self_trained_model_run(object):
         self.PA  = 50
         self.PB  = 50
 
-        GPIO.setmode(GPIO.BCM)
         GPIO.setwarnings(False)
         GPIO.setup(self.AIN1,GPIO.OUT)
         GPIO.setup(self.AIN2,GPIO.OUT)
@@ -70,223 +73,119 @@ class self_trained_model_run(object):
         GPIO.output(self.BIN1,GPIO.HIGH)
         GPIO.output(self.BIN2,GPIO.LOW)
 
-    def setPWMA(self,value):
-        self.PA = value
-        self.PWMA.ChangeDutyCycle(self.PA)
+# --- UTILITY FUNCTIONS ---
 
-    def setPWMB(self,value):
-        self.PB = value
-        self.PWMB.ChangeDutyCycle(self.PB)
-
-    def setMotor(self, left, right):
-        if 0 <= right <= 100:
-            GPIO.output(self.AIN1,GPIO.HIGH)
-            GPIO.output(self.AIN2,GPIO.LOW)
-            self.PWMA.ChangeDutyCycle(right)
-        elif -100 <= right < 0:
-            GPIO.output(self.AIN1,GPIO.LOW)
-            GPIO.output(self.AIN2,GPIO.HIGH)
-            self.PWMA.ChangeDutyCycle(-right)
-
-        if 0 <= left <= 100:
-            GPIO.output(self.BIN1,GPIO.HIGH)
-            GPIO.output(self.BIN2,GPIO.LOW)
-            self.PWMB.ChangeDutyCycle(left)
-        elif -100 <= left < 0:
-            GPIO.output(self.BIN1,GPIO.LOW)
-            GPIO.output(self.BIN2,GPIO.HIGH)
-            self.PWMB.ChangeDutyCycle(-left)
+def initialize_camera():
+    # Force close any existing camera handles
+    os.system("sudo fuser -k /dev/video0 > /dev/null 2>&1")
+    cap = cv2.VideoCapture(0, cv2.CAP_V4L2)
+    time.sleep(2)
+    
+    if not cap.isOpened():
+        print("Falling back to index 1...")
+        cap = cv2.VideoCapture(1, cv2.CAP_V4L2)
+    
+    # RESOLUTION DOWN: 320x240 for speed
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 320)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 240)
+    cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"YUYV"))
+    cap.set(cv2.CAP_PROP_FPS, 20)
+    return cap
 
 def follow_person(results, frame_width):
-    BASE_SPEED = 40      # constant forward speed
-    TURN_GAIN = 0.20     # how strongly to turn toward the person
-
-    persons = []
-
-    # Collect all detected persons
-    for box in results[0].boxes:
-        if int(box.cls[0]) == 0:  # class 0 = person
-            x1, y1, x2, y2 = map(int, box.xyxy[0])
-            persons.append((x1, y1, x2, y2))
-
-    # No person detected → stop
-    if not persons:
-        Ab.left()
-        print("There's no person")
-        time.sleep(0.5)
+    BASE_SPEED = 40
+    if not results or not results[0].boxes:
         Ab.stop()
-        time.sleep(0.5)
         return
 
-    # Choose the closest person (largest bounding box height)
-    x1, y1, x2, y2 = max(persons, key=lambda b: (b[3] - b[1]))
+    persons = [box for box in results[0].boxes if int(box.cls[0]) == 0]
+    if not persons:
+        Ab.stop()
+        return
 
-    # Compute center of the person
+    # Target largest person
+    box = max(persons, key=lambda b: (b.xyxy[0][3] - b.xyxy[0][1]))
+    x1, _, x2, _ = map(int, box.xyxy[0])
     cx = (x1 + x2) // 2
     center = frame_width // 2
-    print("Center: ", center)
-    error = cx - center
 
     if cx < center - 40:
         Ab.left()
-        print("Turning left")
-        time.sleep(0.5)
-        Ab.forward()
-        time.sleep(0.5)
-        Ab.stop()
     elif cx > center + 40:
         Ab.right()
-        print("Turning right")
-        time.sleep(0.5)
-        Ab.forward()
-        time.sleep(0.5)
-        Ab.stop()
     else:
         Ab.forward()
-        print("Going straight")
 
-    # Steering control
-    turn = int(error * TURN_GAIN)
-
-    # Motor speeds
-    left = BASE_SPEED - turn
-    right = BASE_SPEED + turn
-
-    # Clamp motor values
-    left = max(-100, min(100, left))
-    print("Left: ", left)
-    
-    right = max(-100, min(100, right))
-    print("Right: ", right)
-
-    # Ab.setMotor(left, right)
-    
 def generate():
     while True:
         ret, frame = cap.read()
-        if not ret:
-            break
-
-        t0 = time.time()
-        results = model(frame)   # DO NOT set imgsz
-        fps = 1 / (time.time() - t0)
-
+        if not ret: break
+        
+        # Inference imgsz=320 matches our camera resolution for speed
+        results = model(frame, imgsz=320, verbose=False)
         annotated = results[0].plot()
-        cv2.putText(annotated, f"FPS: {fps:.1f}", (10, 30),
-                    cv2.FONT_HERSHEY_SIMPLEX, 1, (0,255,0), 2)
-
+        
         _, jpeg = cv2.imencode('.jpg', annotated)
         yield (b'--frame\r\n'
-               b'Content-Type: image/jpeg\r\n\r\n' +
-               jpeg.tobytes() + b'\r\n')
+               b'Content-Type: image/jpeg\r\n\r\n' + jpeg.tobytes() + b'\r\n')
 
-from threading import Thread
-
+# --- INITIALIZATION ---
 app = Flask(__name__)
 model = YOLO("runs/detect/train3/weights/best_openvino_model", task="detect")
-cap = cv2.VideoCapture(0)
-ret, _ = cap.read()
-if not ret:
-    cap.release()
-    cap = cv2.VideoCapture(1)
-
-cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG")) 
-# Request 30 FPS 
-cap.set(cv2.CAP_PROP_FPS, 30) 
-# Set resolution 
-cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640) 
-cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-Ab = robot_follow()
+cap = initialize_camera()
+Ab = self_trained_model_run()
 control_mode = "manual"
 
-def robot_loop():
-    global control_mode
-    try:
-        frame_count = 0
-        while True:
-            ret, frame = cap.read()
-            if not ret:
-                Ab.stop()
-                break
+# --- FLASK ROUTES ---
 
-            # ONLY run AI logic if in auto mode
-            if control_mode == "auto":
-                frame_count += 1
-                if frame_count % 3 != 0:
-                    continue
-
-                results = model(frame, stream=True, verbose=False, classes=[0])
-                results = list(results)
-                follow_person(results, frame.shape[1])
-            else:
-                # In manual mode, we just clear the frame buffer so it's fresh 
-                # when we switch back to auto
-                time.sleep(0.1) 
-
-    except KeyboardInterrupt:
-        Ab.stop()
-    finally:
-        Ab.stop()
-        GPIO.cleanup()
-        cap.release()
-
-@app.route('/video')
-def video():
-    return Response(generate(),
-                    mimetype='multipart/x-mixed-replace; boundary=frame')
-                    
 @app.route('/')
 def index():
     return """
     <html>
         <head>
-            <title>Robot Control</title>
+            <title>AlphaBot Control</title>
             <style>
                 body { font-family: sans-serif; text-align: center; background: #222; color: white; }
                 .status-box { padding: 10px; margin: 10px; border-radius: 5px; background: #444; }
-                button { padding: 10px 20px; font-size: 16px; cursor: pointer; }
+                button { padding: 12px 24px; font-size: 16px; cursor: pointer; margin: 5px; border-radius: 8px; border: none; }
+                .btn-stop { background: #ff4444; color: white; font-weight: bold; margin-top: 30px; width: 250px; }
             </style>
         </head>
         <body>
-            <h1>Robot Live Stream</h1>
-            <img src="/video" width="640" style="border: 2px solid #555;">
-            
+            <h1>AlphaBot AI Stream</h1>
+            <img src="/video" width="600" style="border: 3px solid #555; border-radius: 10px;">
             <div class="status-box">
-                <h2 id="status">Mode: AUTO (Following)</h2>
-                <button onclick="setMode('auto')">AI Follow Mode</button>
-                <button onclick="setMode('manual')">Manual Control Mode</button>
+                <h2 id="status">MODE: MANUAL</h2>
+                <button style="background: #4CAF50; color: white;" onclick="setMode('auto')">START AI FOLLOW</button>
+                <button style="background: #2196F3; color: white;" onclick="setMode('manual')">MANUAL CONTROL</button>
             </div>
-            <p>Hold <b>W, A, S, D</b> to move. Release to stop.</p>
-
+            <p>Use <b>W, A, S, D</b> to drive manually.</p>
+            <button class="btn-stop" onclick="shutdownSystem()">TERMINATE SYSTEM</button>
             <script>
                 let activeKey = null;
-
                 function setMode(mode) {
                     fetch('/mode/' + mode);
-                    document.getElementById('status').innerText = "Mode: " + mode.toUpperCase();
+                    document.getElementById('status').innerText = "MODE: " + mode.toUpperCase();
                 }
-
-                document.addEventListener('keydown', function(event) {
-                    let key = event.key.toLowerCase();
-                    // Prevent repeated fetch calls when holding key down
-                    if (activeKey === key) return; 
-                    
-                    let cmd = '';
-                    if (key === 'w') cmd = 'forward';
-                    else if (key === 's') cmd = 'backward';
-                    else if (key === 'a') cmd = 'left';
-                    else if (key === 'd') cmd = 'right';
-                    
-                    if (cmd) {
+                function shutdownSystem() {
+                    if (confirm("Kill Python process and release hardware?")) {
+                        fetch('/shutdown').then(() => {
+                            document.body.innerHTML = "<h1>SYSTEM SHUTDOWN SUCCESSFUL</h1>";
+                        });
+                    }
+                }
+                document.addEventListener('keydown', (e) => {
+                    let key = e.key.toLowerCase();
+                    if (activeKey === key) return;
+                    if (['w','a','s','d'].includes(key)) {
                         activeKey = key;
-                        setMode('manual'); // Force manual mode on press
+                        let cmd = key=='w'?'forward':key=='s'?'backward':key=='a'?'left':'right';
+                        setMode('manual');
                         fetch('/control/' + cmd);
                     }
                 });
-
-                document.addEventListener('keyup', function(event) {
-                    let key = event.key.toLowerCase();
-                    if (key === activeKey) {
+                document.addEventListener('keyup', (e) => {
+                    if (e.key.toLowerCase() === activeKey) {
                         activeKey = null;
                         fetch('/control/stop');
                     }
@@ -296,35 +195,46 @@ def index():
     </html>
     """
 
+@app.route('/video')
+def video():
+    return Response(generate(), mimetype='multipart/x-mixed-replace; boundary=frame')
+
 @app.route('/mode/<mode_type>')
 def set_mode(mode_type):
     global control_mode
     control_mode = mode_type
-    Ab.stop() # Stop the robot when switching modes for safety
+    Ab.stop()
     return "OK", 200
 
 @app.route('/control/<direction>')
 def control(direction):
-    # We only allow manual control if the mode is manual
     if control_mode == "manual":
-        if direction == 'forward': 
-            Ab.forward()
-        elif direction == 'backward': 
-            Ab.backward()
-        elif direction == 'left': 
-            Ab.left()
-        elif direction == 'right': 
-            Ab.right()
-        elif direction == 'stop': 
-            Ab.stop()
+        if direction == 'forward': Ab.forward()
+        elif direction == 'backward': Ab.backward()
+        elif direction == 'left': Ab.left()
+        elif direction == 'right': Ab.right()
+        elif direction == 'stop': Ab.stop()
     return "OK", 200
-    
+
+@app.route('/shutdown')
+def shutdown():
+    print("Shutting down...")
+    Ab.stop()
+    cap.release()
+    GPIO.cleanup()
+    os.kill(os.getpid(), signal.SIGINT)
+    return "Terminated"
+
+def robot_loop():
+    global control_mode
+    while True:
+        if control_mode == "auto":
+            ret, frame = cap.read()
+            if ret:
+                results = list(model(frame, imgsz=320, stream=True, verbose=False, classes=[0]))
+                follow_person(results, frame.shape[1])
+        time.sleep(0.05)
+
 if __name__ == '__main__':
-    # Start robot control loop in background
-    t = Thread(target=robot_loop, daemon=True)
-    t.start()
-
-    # Start Flask server
+    Thread(target=robot_loop, daemon=True).start()
     app.run(host='0.0.0.0', port=8080, debug=False)
-
-

@@ -44,12 +44,12 @@ python3 export_yolo_to_openvino.py
 ## Usage
 ### 1. Optimize camera performance
 ```
-v4l2-ctl -d /dev/video0 --set-fmt-video=width=640,height=480,pixelformat=MJPG
+v4l2-ctl -d /dev/video0 --set-fmt-video=width=320,height=240,pixelformat=YUYV
 v4l2-ctl -d /dev/video0 --set-parm=30
 ```
 ### 2. Verify inference
 ```
-yolo predict model=yolo11n_openvino_model source=0 imgsz=640 vid_stride=2 show=True
+yolo predict model=yolo11n_openvino_model source=0 imgsz=320 vid_stride=2 show=True
 ```
 ### 3. Launch the robot
 ```
@@ -68,7 +68,7 @@ Vít Kůřil - Developer & Data Labelling
 
 Nathalie Sikihimba Kahambu - Documentation & Data Labelling
 
-Yatin Thakkar - Documentation & Data Labelling
+Yatin Thakkar - Documentation, Presentation & Data Labelling
 
 Rollanas Terentjevas - Research, Presentation & Data Labelling
 
