@@ -4,7 +4,7 @@ An autonomous robotics project utilizing **Ultralytics YOLO** and **OpenVINO** t
 
 ## Overview
 This project transforms a standard AlphaBot into an intelligent agent. By leveraging the **YOLO11** architecture optimized for the Raspberry Pi's CPU via **OpenVINO**, the robot can process real-time visual data from a USB webcam to differentiate between manual control and autonomous target-following behavior.
-However, the primary task is to implement a self trained model and implement it.
+However, the primary task is to implement a self trained model and test it on a specific person.
 
 ---
 
@@ -60,7 +60,7 @@ python3 robot_follow.py
 
 Hoang Minh Quan Nguyen - Project Lead & Developer
 
-Vitek - Developer & Data Labelling
+Vít Kůřil - Developer & Data Labelling
 
 Nathalie Sikihimba Kahambu - Documentation & Data Labelling
 
