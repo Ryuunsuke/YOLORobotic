@@ -1,0 +1,9 @@
+# Directories
+robo/
+AlphaBot2-Demo/
+yolo11n_openvino_model/
+
+# Specific Files
+AlphaBot2.py
+AlphaBot2-Demo.zip
+yolo11n.pt
