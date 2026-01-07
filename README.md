@@ -56,6 +56,10 @@ yolo predict model=yolo11n_openvino_model source=0 imgsz=640 vid_stride=2 show=T
 python3 robot_follow.py
 ```
 
+### Note
+If you want to implement your own model, make changes to export_model_to_openvino.py and run it
+As well as self_trained_model_run.py
+
 ## Contributors
 
 Hoang Minh Quan Nguyen - Project Lead & Developer
